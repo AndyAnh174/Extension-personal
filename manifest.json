@@ -6,8 +6,8 @@
   "permissions": [
     "storage",
     "tabs",
-    "notifications",
     "alarms",
+    "notifications",
     "downloads"
   ],
   "background": {

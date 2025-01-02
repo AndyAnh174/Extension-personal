@@ -9,7 +9,7 @@ chrome.runtime.onInstalled.addListener(() => {
 })
 
 // Lắng nghe message từ popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
   if (message.type === 'SET_AUTO_START') {
     chrome.storage.sync.set({ autoStart: true })
   } else if (message.type === 'REMOVE_AUTO_START') {
@@ -17,11 +17,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 })
 
-// Xử lý backup tự động
-chrome.alarms.onAlarm.addListener((alarm) => {
+// Lắng nghe alarm cho reminders
+chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'backup') {
     performBackup()
+  } else {
+    // Kiểm tra nếu là alarm của reminder
+    const { reminders = [] } = await chrome.storage.sync.get(['reminders'])
+    const reminder = reminders.find((r: any) => r.id === alarm.name)
+    
+    if (reminder) {
+      // Kiểm tra settings
+      const { settings } = await chrome.storage.sync.get(['settings'])
+      if (!settings?.notifications) return
+
+      // Hiển thị notification
+      chrome.notifications.create(reminder.id, {
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: reminder.title,
+        message: reminder.message,
+        priority: 2,
+        requireInteraction: true
+      })
+
+      // Phát âm thanh nếu được bật
+      if (settings?.soundEnabled) {
+        const audio = new Audio(chrome.runtime.getURL('notification.mp3'))
+        audio.play()
+      }
+
+      // Cập nhật nextTrigger
+      const updatedReminders = reminders.map((r: any) => {
+        if (r.id === reminder.id) {
+          return {
+            ...r,
+            nextTrigger: Date.now() + r.interval * 60 * 1000
+          }
+        }
+        return r
+      })
+      
+      chrome.storage.sync.set({ reminders: updatedReminders })
+    }
   }
+})
+
+// Xử lý click vào notification
+chrome.notifications.onClicked.addListener((reminderId) => {
+  // Mở popup khi click vào notification
+  chrome.action.openPopup()
+  // Đóng notification
+  chrome.notifications.clear(reminderId)
 })
 
 async function applySettings() {

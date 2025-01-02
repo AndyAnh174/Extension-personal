@@ -12,7 +12,7 @@ interface Settings {
   notifications: boolean
   autoStart: boolean
   soundEnabled: boolean
-  language: 'vi' | 'en'
+  language: string
   startPage: string
   autoBackup: boolean
   backupInterval: number
@@ -58,16 +58,16 @@ const Settings = () => {
         setSettings(result.settings)
       } else {
         // Nếu chưa có cài đặt, lưu cài đặt mặc định
-        const defaultSettings = {
-          theme: 'light',
+        const defaultSettings: Settings = {
+          theme: 'light' as const,
           fontSize: 14,
           fontFamily: 'system-ui',
           notifications: true,
           autoStart: false,
           soundEnabled: true,
           language: 'vi',
-          startPage: '/',
-          autoBackup: false,
+          startPage: 'dashboard',
+          autoBackup: true,
           backupInterval: 24
         }
         chrome.storage.sync.set({ settings: defaultSettings })

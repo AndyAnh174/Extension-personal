@@ -1,113 +1,200 @@
 import { useState, useEffect } from 'react'
-import { Button, Card, Input, List, Typography, Modal, Select } from 'antd'
-import { 
-  PlusOutlined, 
-  DeleteOutlined, 
+import { Card, Button, Typography, Modal, Input, message, Tooltip } from 'antd'
+import {
+  PlusOutlined,
+  DeleteOutlined,
   EditOutlined,
   ThunderboltOutlined,
-  LinkOutlined 
+  LinkOutlined,
+  CopyOutlined,
+  SaveOutlined,
+  ShareAltOutlined
 } from '@ant-design/icons'
 
 const { Title, Text } = Typography
-const { Option } = Select
 
 interface QuickAction {
   id: string
   name: string
-  url: string
-  shortcut: string
-  category: string
+  type: 'url' | 'script' | 'command'
+  content: string
+  icon?: string
+  shortcut?: string
 }
+
+const defaultActions: QuickAction[] = [
+  {
+    id: 'save-tabs',
+    name: 'Lưu tất cả tab',
+    type: 'command',
+    content: 'save_all_tabs',
+    icon: 'save'
+  },
+  {
+    id: 'copy-urls',
+    name: 'Copy URL tất cả tab',
+    type: 'command',
+    content: 'copy_all_urls',
+    icon: 'copy'
+  },
+  {
+    id: 'share-tabs',
+    name: 'Chia sẻ tab',
+    type: 'command',
+    content: 'share_tabs',
+    icon: 'share'
+  }
+]
 
 const QuickActions = () => {
   const [actions, setActions] = useState<QuickAction[]>([])
-  const [categories, setCategories] = useState<string[]>([])
   const [isModalVisible, setIsModalVisible] = useState(false)
-  const [currentAction, setCurrentAction] = useState<QuickAction | null>(null)
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
-  const [shortcut, setShortcut] = useState('')
-  const [category, setCategory] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [editingAction, setEditingAction] = useState<QuickAction | null>(null)
+  const [newAction, setNewAction] = useState<Omit<QuickAction, 'id'>>({
+    name: '',
+    type: 'url',
+    content: ''
+  })
 
   useEffect(() => {
-    chrome.storage.local.get(['quickActions', 'actionCategories'], (result) => {
-      if (result.quickActions) {
-        setActions(result.quickActions)
-      }
-      if (result.actionCategories) {
-        setCategories(result.actionCategories)
-      }
-    })
+    loadActions()
   }, [])
 
-  const saveAction = () => {
-    if (!name || !url) return
-
-    const newActions = [...actions]
-    
-    if (currentAction) {
-      const index = newActions.findIndex(a => a.id === currentAction.id)
-      newActions[index] = {
-        ...currentAction,
-        name,
-        url,
-        shortcut,
-        category
+  const loadActions = () => {
+    chrome.storage.sync.get(['quickActions'], (result) => {
+      if (result.quickActions) {
+        setActions(result.quickActions)
+      } else {
+        // Khởi tạo actions mặc định
+        chrome.storage.sync.set({ quickActions: defaultActions })
+        setActions(defaultActions)
       }
-    } else {
-      newActions.push({
-        id: Date.now().toString(),
-        name,
-        url,
-        shortcut,
-        category
-      })
+    })
+  }
+
+  const saveActions = (newActions: QuickAction[]) => {
+    chrome.storage.sync.set({ quickActions: newActions })
+    setActions(newActions)
+  }
+
+  const addAction = () => {
+    if (!newAction.name || !newAction.content) {
+      message.error('Vui lòng nhập đầy đủ thông tin')
+      return
     }
 
-    setActions(newActions)
-    chrome.storage.local.set({ quickActions: newActions })
-
-    if (category && !categories.includes(category)) {
-      const newCategories = [...categories, category]
-      setCategories(newCategories)
-      chrome.storage.local.set({ actionCategories: newCategories })
+    const action: QuickAction = {
+      id: Date.now().toString(),
+      ...newAction
     }
 
-    resetForm()
-  }
-
-  const deleteAction = (id: string) => {
-    const newActions = actions.filter(action => action.id !== id)
-    setActions(newActions)
-    chrome.storage.local.set({ quickActions: newActions })
-  }
-
-  const editAction = (action: QuickAction) => {
-    setCurrentAction(action)
-    setName(action.name)
-    setUrl(action.url)
-    setShortcut(action.shortcut)
-    setCategory(action.category)
-    setIsModalVisible(true)
-  }
-
-  const resetForm = () => {
-    setCurrentAction(null)
-    setName('')
-    setUrl('')
-    setShortcut('')
-    setCategory('')
+    saveActions([...actions, action])
     setIsModalVisible(false)
+    setNewAction({
+      name: '',
+      type: 'url',
+      content: ''
+    })
+    message.success('Đã thêm thao tác nhanh')
   }
 
-  const executeAction = (url: string) => {
-    chrome.tabs.create({ url })
+  const updateAction = () => {
+    if (!editingAction || !editingAction.name || !editingAction.content) {
+      message.error('Vui lòng nhập đầy đủ thông tin')
+      return
+    }
+
+    const updatedActions = actions.map(a => 
+      a.id === editingAction.id ? editingAction : a
+    )
+    saveActions(updatedActions)
+    setEditingAction(null)
+    message.success('Đã cập nhật thao tác nhanh')
   }
 
-  const filteredActions = actions.filter(action => {
-    return categoryFilter === 'all' ? true : action.category === categoryFilter
-  })
+  const removeAction = (actionId: string) => {
+    const updatedActions = actions.filter(a => a.id !== actionId)
+    saveActions(updatedActions)
+    message.success('Đã xóa thao tác nhanh')
+  }
+
+  const executeAction = async (action: QuickAction) => {
+    try {
+      switch (action.type) {
+        case 'url':
+          chrome.tabs.create({ url: action.content })
+          break
+
+        case 'script':
+          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]?.id) {
+              chrome.tabs.executeScript(tabs[0].id, {
+                code: action.content
+              })
+            }
+          })
+          break
+
+        case 'command':
+          switch (action.content) {
+            case 'save_all_tabs':
+              const tabs = await chrome.tabs.query({})
+              const tabGroup = {
+                id: Date.now().toString(),
+                name: `Tabs ${new Date().toLocaleString()}`,
+                tabs
+              }
+              const { tabGroups = [] } = await chrome.storage.sync.get(['tabGroups'])
+              chrome.storage.sync.set({ tabGroups: [...tabGroups, tabGroup] })
+              message.success('Đã lưu tất cả tab')
+              break
+
+            case 'copy_all_urls':
+              const allTabs = await chrome.tabs.query({})
+              const urls = allTabs.map(tab => tab.url).join('\n')
+              await navigator.clipboard.writeText(urls)
+              message.success('Đã copy URL của tất cả tab')
+              break
+
+            case 'share_tabs':
+              const currentTabs = await chrome.tabs.query({})
+              const tabUrls = currentTabs.map(tab => tab.url).join('\n')
+              const shareData = {
+                title: 'Chia sẻ tabs',
+                text: 'Danh sách tabs:',
+                url: tabUrls
+              }
+              if (navigator.share) {
+                await navigator.share(shareData)
+              } else {
+                await navigator.clipboard.writeText(tabUrls)
+                message.success('Đã copy URL để chia sẻ')
+              }
+              break
+          }
+          break
+      }
+    } catch (error) {
+      message.error('Có lỗi khi thực hiện thao tác')
+    }
+  }
+
+  const getActionIcon = (action: QuickAction) => {
+    switch (action.icon || action.type) {
+      case 'save':
+        return <SaveOutlined />
+      case 'copy':
+        return <CopyOutlined />
+      case 'share':
+        return <ShareAltOutlined />
+      case 'url':
+        return <LinkOutlined />
+      case 'script':
+        return <ThunderboltOutlined />
+      default:
+        return <ThunderboltOutlined />
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -122,115 +209,146 @@ const QuickActions = () => {
         </Button>
       </div>
 
-      <div className="flex gap-4">
-        <Select
-          className="w-40"
-          value={categoryFilter}
-          onChange={setCategoryFilter}
-        >
-          <Option value="all">Tất cả danh mục</Option>
-          {categories.map(cat => (
-            <Option key={cat} value={cat}>{cat}</Option>
-          ))}
-        </Select>
+      <div className="grid grid-cols-2 gap-4">
+        {actions.map(action => (
+          <Card key={action.id} className="shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {getActionIcon(action)}
+                <div>
+                  <Text strong>{action.name}</Text>
+                  {action.shortcut && (
+                    <Text className="block text-xs text-gray-500">
+                      Phím tắt: {action.shortcut}
+                    </Text>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Tooltip title="Thực hiện">
+                  <Button
+                    type="primary"
+                    icon={<ThunderboltOutlined />}
+                    onClick={() => executeAction(action)}
+                  />
+                </Tooltip>
+                <Tooltip title="Sửa">
+                  <Button
+                    icon={<EditOutlined />}
+                    onClick={() => setEditingAction(action)}
+                  />
+                </Tooltip>
+                <Tooltip title="Xóa">
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => removeAction(action.id)}
+                  />
+                </Tooltip>
+              </div>
+            </div>
+          </Card>
+        ))}
       </div>
 
-      <List
-        grid={{ gutter: 16, column: 3 }}
-        dataSource={filteredActions}
-        renderItem={action => (
-          <List.Item>
-            <Card
-              actions={[
-                <Button
-                  type="text"
-                  icon={<ThunderboltOutlined />}
-                  onClick={() => executeAction(action.url)}
-                />,
-                <Button
-                  type="text"
-                  icon={<EditOutlined />}
-                  onClick={() => editAction(action)}
-                />,
-                <Button
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => deleteAction(action.id)}
-                />
-              ]}
-            >
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <LinkOutlined className="text-gray-400" />
-                  <Text strong>{action.name}</Text>
-                </div>
-                {action.shortcut && (
-                  <Text keyboard className="text-sm">
-                    {action.shortcut}
-                  </Text>
-                )}
-                {action.category && (
-                  <div>
-                    <Text type="secondary" className="text-sm">
-                      {action.category}
-                    </Text>
-                  </div>
-                )}
-              </div>
-            </Card>
-          </List.Item>
-        )}
-      />
-
       <Modal
-        title={currentAction ? 'Sửa thao tác' : 'Thêm thao tác'}
-        open={isModalVisible}
-        onOk={saveAction}
-        onCancel={resetForm}
+        title={editingAction ? 'Sửa thao tác nhanh' : 'Thêm thao tác nhanh'}
+        open={isModalVisible || !!editingAction}
+        onOk={editingAction ? updateAction : addAction}
+        onCancel={() => {
+          setIsModalVisible(false)
+          setEditingAction(null)
+          setNewAction({
+            name: '',
+            type: 'url',
+            content: ''
+          })
+        }}
       >
         <div className="space-y-4">
           <div>
             <Text>Tên thao tác</Text>
             <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="VD: Mở Gmail"
+              value={editingAction?.name || newAction.name}
+              onChange={(e) => {
+                if (editingAction) {
+                  setEditingAction({ ...editingAction, name: e.target.value })
+                } else {
+                  setNewAction(prev => ({ ...prev, name: e.target.value }))
+                }
+              }}
+              placeholder="Ví dụ: Mở Gmail"
             />
           </div>
 
           <div>
-            <Text>URL</Text>
-            <Input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://..."
+            <Text>Loại thao tác</Text>
+            <Input.Group compact>
+              <Button.Group>
+                <Button
+                  type={(editingAction?.type || newAction.type) === 'url' ? 'primary' : 'default'}
+                  onClick={() => {
+                    if (editingAction) {
+                      setEditingAction({ ...editingAction, type: 'url' })
+                    } else {
+                      setNewAction(prev => ({ ...prev, type: 'url' }))
+                    }
+                  }}
+                >
+                  URL
+                </Button>
+                <Button
+                  type={(editingAction?.type || newAction.type) === 'script' ? 'primary' : 'default'}
+                  onClick={() => {
+                    if (editingAction) {
+                      setEditingAction({ ...editingAction, type: 'script' })
+                    } else {
+                      setNewAction(prev => ({ ...prev, type: 'script' }))
+                    }
+                  }}
+                >
+                  Script
+                </Button>
+              </Button.Group>
+            </Input.Group>
+          </div>
+
+          <div>
+            <Text>
+              {(editingAction?.type || newAction.type) === 'url' ? 'URL' : 'Mã JavaScript'}
+            </Text>
+            <Input.TextArea
+              value={editingAction?.content || newAction.content}
+              onChange={(e) => {
+                if (editingAction) {
+                  setEditingAction({ ...editingAction, content: e.target.value })
+                } else {
+                  setNewAction(prev => ({ ...prev, content: e.target.value }))
+                }
+              }}
+              placeholder={
+                (editingAction?.type || newAction.type) === 'url'
+                  ? 'https://example.com'
+                  : 'document.querySelector("button").click()'
+              }
+              rows={4}
             />
           </div>
 
           <div>
             <Text>Phím tắt (tùy chọn)</Text>
             <Input
-              value={shortcut}
-              onChange={(e) => setShortcut(e.target.value)}
-              placeholder="VD: Ctrl+Shift+G"
+              value={editingAction?.shortcut || newAction.shortcut}
+              onChange={(e) => {
+                if (editingAction) {
+                  setEditingAction({ ...editingAction, shortcut: e.target.value })
+                } else {
+                  setNewAction(prev => ({ ...prev, shortcut: e.target.value }))
+                }
+              }}
+              placeholder="Ctrl+Shift+1"
             />
-          </div>
-
-          <div>
-            <Text>Danh mục</Text>
-            <Select
-              className="w-full"
-              value={category}
-              onChange={setCategory}
-              showSearch
-              allowClear
-              placeholder="Chọn hoặc thêm danh mục mới"
-            >
-              {categories.map(cat => (
-                <Option key={cat} value={cat}>{cat}</Option>
-              ))}
-            </Select>
           </div>
         </div>
       </Modal>
@@ -238,4 +356,4 @@ const QuickActions = () => {
   )
 }
 
-export default QuickActions 
+export default QuickActions
