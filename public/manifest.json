@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Personal Productivity Extension",
+  "version": "1.0.0",
+  "description": "Tăng năng suất làm việc với các tính năng quản lý tab, chặn trang web và theo dõi thói quen",
+  "permissions": [
+    "tabs",
+    "storage",
+    "webNavigation",
+    "alarms",
+    "notifications"
+  ],
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": "icons/icon.svg"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "128": "icons/icon.svg"
+  }
+} 
