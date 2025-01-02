@@ -1,3 +1,38 @@
+@import 'antd/dist/reset.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  /* Custom styles cho Ant Design */
+  .ant-btn-primary {
+    @apply bg-primary hover:bg-primary-hover;
+  }
+
+  .ant-input:focus,
+  .ant-input-focused {
+    @apply border-primary shadow-none;
+  }
+
+  .ant-select-focused .ant-select-selector {
+    @apply border-primary shadow-none;
+  }
+}
+
+/* Tùy chỉnh scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-base-200;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-base-300 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-base-content/20;
+}

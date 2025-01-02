@@ -27,42 +27,62 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   }
 })
 
-// Thiết lập nhắc nhở uống nước
-const setupWaterReminder = async () => {
-  const { settings } = await chrome.storage.local.get(['settings'])
-  if (!settings?.notifications || !settings?.waterReminderInterval) return
+// Xử lý các reminder
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  const { reminders } = await chrome.storage.local.get(['reminders'])
+  if (!reminders) return
 
-  chrome.alarms.create('waterReminder', {
-    periodInMinutes: settings.waterReminderInterval
-  })
-}
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'waterReminder') {
-    chrome.notifications.create({
+  const reminder = reminders.find(r => r.id === alarm.name)
+  if (reminder && reminder.isActive) {
+    chrome.notifications.create(reminder.id, {
       type: 'basic',
-      iconUrl: 'icons/icon128.png',
-      title: 'Nhắc nhở uống nước',
-      message: 'Đã đến giờ uống nước rồi! 💧'
+      iconUrl: 'icons/icon.svg',
+      title: reminder.title,
+      message: reminder.message
     })
   }
 })
 
 // Khởi tạo các tác vụ nền
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   // Thiết lập cài đặt mặc định
-  chrome.storage.local.get(['settings'], (result) => {
-    if (!result.settings) {
-      chrome.storage.local.set({
-        settings: {
-          theme: 'light',
-          quoteSource: 'quotable',
-          waterReminderInterval: 30,
-          notifications: true
-        }
+  const { settings } = await chrome.storage.local.get(['settings'])
+  if (!settings) {
+    await chrome.storage.local.set({
+      settings: {
+        theme: 'light',
+        quoteSource: 'quotable',
+        waterReminderInterval: 30,
+        notifications: true
+      }
+    })
+  }
+
+  // Thiết lập reminders mặc định
+  const { reminders } = await chrome.storage.local.get(['reminders'])
+  if (!reminders) {
+    const defaultReminder = {
+      id: 'water',
+      title: 'Uống nước',
+      message: 'Đã đến giờ uống nước rồi! 💧',
+      interval: 30,
+      isActive: true
+    }
+    await chrome.storage.local.set({ reminders: [defaultReminder] })
+    
+    if (defaultReminder.isActive) {
+      chrome.alarms.create(defaultReminder.id, {
+        periodInMinutes: defaultReminder.interval
       })
     }
-  })
-
-  setupWaterReminder()
+  } else {
+    // Khởi tạo lại các alarm cho các reminder đang active
+    reminders.forEach(reminder => {
+      if (reminder.isActive) {
+        chrome.alarms.create(reminder.id, {
+          periodInMinutes: reminder.interval
+        })
+      }
+    })
+  }
 }) 

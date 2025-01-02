@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Personal Extension",
+  "version": "1.0.0",
+  "description": "Extension cá nhân để tăng năng suất làm việc",
+  "permissions": [
+    "storage",
+    "tabs",
+    "notifications",
+    "alarms",
+    "downloads"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "Personal Extension"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+} 
