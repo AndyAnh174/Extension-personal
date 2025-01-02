@@ -1,164 +1,216 @@
-import { useEffect, useState } from 'react'
-import { Card, Typography, Row, Col, Statistic, Timeline } from 'antd'
+import { useState, useEffect } from 'react';
+import { Card, Typography, Tabs, DatePicker, Empty, Spin, Statistic, message } from 'antd';
 import {
-  ClockCircleOutlined,
-  CheckCircleOutlined,
-  BookOutlined,
-  BellOutlined
-} from '@ant-design/icons'
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell
+} from 'recharts';
+import dayjs from 'dayjs';
+import duration from 'dayjs/plugin/duration';
+import StorageLocationModal from './StorageLocationModal';
 
-const { Title } = Typography
+dayjs.extend(duration);
 
-interface DashboardStats {
-  openTabs: number
-  focusTime: number
-  completedTasks: number
-  savedArticles: number
-  upcomingReminders: Array<{
-    id: string
-    title: string
-    time: string
-  }>
-  recentNotes: Array<{
-    id: string
-    title: string
-    createdAt: string
-  }>
+const { Title } = Typography;
+const { TabPane } = Tabs;
+const { RangePicker } = DatePicker;
+
+interface WebsiteStats {
+  domain: string;
+  totalTime: number; // thời gian tính bằng giây
+  visitCount: number;
 }
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
 const Dashboard = () => {
-  const [stats, setStats] = useState<DashboardStats>({
-    openTabs: 0,
-    focusTime: 0,
-    completedTasks: 0,
-    savedArticles: 0,
-    upcomingReminders: [],
-    recentNotes: []
-  })
+  const [loading, setLoading] = useState(false);
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
+    dayjs().subtract(7, 'day'),
+    dayjs()
+  ]);
+  const [statsData, setStatsData] = useState<WebsiteStats[]>([]);
+  const [timeframe, setTimeframe] = useState<'day' | 'week' | 'month' | 'year'>('week');
+  const [showStorageModal, setShowStorageModal] = useState(false);
 
   useEffect(() => {
-    // Lấy số tab đang mở
-    chrome.tabs.query({}, (tabs) => {
-      setStats(prev => ({ ...prev, openTabs: tabs.length }))
-    })
+    checkStorageLocation();
+  }, []);
 
-    // Lấy dữ liệu từ storage
-    chrome.storage.sync.get(['focusTime', 'tasks', 'articles', 'reminders', 'notes'], (result) => {
-      const focusTime = result.focusTime || 0
-      const completedTasks = (result.tasks || []).filter((t: any) => t.completed).length
-      const savedArticles = (result.articles || []).length
-      
-      const upcomingReminders = (result.reminders || [])
-        .filter((r: any) => r.isActive)
-        .slice(0, 5)
-        .map((r: any) => ({
-          id: r.id,
-          title: r.title,
-          time: new Date(r.nextTrigger).toLocaleTimeString()
-        }))
+  const checkStorageLocation = async () => {
+    try {
+      const { storageLocation } = await chrome.storage.local.get('storageLocation');
+      if (!storageLocation) {
+        setShowStorageModal(true);
+      }
+    } catch (error) {
+      console.error('Error checking storage location:', error);
+    }
+  };
 
-      const recentNotes = (result.notes || [])
-        .sort((a: any, b: any) => b.createdAt - a.createdAt)
-        .slice(0, 5)
-        .map((n: any) => ({
-          id: n.id,
-          title: n.title,
-          createdAt: new Date(n.createdAt).toLocaleDateString()
-        }))
+  const handleStorageLocationSave = async (values: { location: string }) => {
+    try {
+      const { storageLocation } = await chrome.storage.local.get('storageLocation');
+      if (!storageLocation) {
+        message.error('Chưa chọn thư mục lưu dữ liệu!');
+        return;
+      }
 
-      setStats(prev => ({
-        ...prev,
-        focusTime,
-        completedTasks,
-        savedArticles,
-        upcomingReminders,
-        recentNotes
-      }))
-    })
-  }, [])
+      message.success(`Đã thiết lập thư mục lưu dữ liệu: ${values.location}`);
+      setShowStorageModal(false);
+      await fetchStats();
+    } catch (error) {
+      console.error('Error saving storage location:', error);
+      message.error('Không thể lưu cài đặt');
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+  }, [dateRange, timeframe]);
+
+  const fetchStats = async () => {
+    setLoading(true);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_STATS',
+        startDate: dateRange[0].toISOString(),
+        endDate: dateRange[1].toISOString()
+      });
+
+      if (response.success) {
+        setStatsData(response.data);
+      } else {
+        throw new Error('Failed to fetch stats');
+      }
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatTime = (seconds: number): string => {
+    const d = dayjs.duration(seconds, 'seconds');
+    const hours = Math.floor(d.asHours());
+    const minutes = d.minutes();
+    return `${hours}h ${minutes}m`;
+  };
+
+  const renderTimeChart = () => {
+    if (loading) return <div className="flex justify-center py-8"><Spin /></div>;
+    if (!statsData.length) return <Empty description="Không có dữ liệu" />;
+
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <BarChart data={statsData}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="domain" />
+          <YAxis tickFormatter={(value) => formatTime(value)} />
+          <Tooltip 
+            formatter={(value: number) => formatTime(value)}
+            labelFormatter={(label) => `Trang web: ${label}`}
+          />
+          <Legend />
+          <Bar 
+            name="Thời gian sử dụng" 
+            dataKey="totalTime" 
+            fill="#0088FE"
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  };
+
+  const renderVisitChart = () => {
+    if (loading) return <div className="flex justify-center py-8"><Spin /></div>;
+    if (!statsData.length) return <Empty description="Không có dữ liệu" />;
+
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <PieChart>
+          <Pie
+            data={statsData}
+            dataKey="visitCount"
+            nameKey="domain"
+            cx="50%"
+            cy="50%"
+            outerRadius={100}
+            label={({ domain, percent }) => 
+              `${domain} (${(percent * 100).toFixed(0)}%)`
+            }
+          >
+            {statsData.map((_, index) => (
+              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            ))}
+          </Pie>
+          <Tooltip />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    );
+  };
 
   return (
-    <div className="space-y-8">
-      <Title level={4}>Tổng quan</Title>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <Title level={4}>Thống kê sử dụng trình duyệt</Title>
+        <div className="flex items-center gap-4">
+          <Tabs 
+            activeKey={timeframe} 
+            onChange={(key) => setTimeframe(key as typeof timeframe)}
+          >
+            <TabPane tab="Ngày" key="day" />
+            <TabPane tab="Tuần" key="week" />
+            <TabPane tab="Tháng" key="month" />
+            <TabPane tab="Năm" key="year" />
+          </Tabs>
+          <RangePicker
+            value={dateRange}
+            onChange={(dates) => {
+              if (dates && dates[0] && dates[1]) {
+                setDateRange([dates[0], dates[1]]);
+              }
+            }}
+          />
+        </div>
+      </div>
 
-      <Row gutter={[16, 16]}>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Tab đang mở"
-              value={stats.openTabs}
-              prefix={<ClockCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Thời gian tập trung"
-              value={Math.round(stats.focusTime / 60)}
-              suffix="phút"
-              prefix={<ClockCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Công việc hoàn thành"
-              value={stats.completedTasks}
-              prefix={<CheckCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Bài viết đã lưu"
-              value={stats.savedArticles}
-              prefix={<BookOutlined />}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <Card title="Thời gian sử dụng theo trang web">
+        {renderTimeChart()}
+      </Card>
 
-      <Row gutter={16}>
-        <Col span={12}>
-          <Card title="Nhắc nhở sắp tới" extra={<BellOutlined />}>
-            <Timeline>
-              {stats.upcomingReminders.map(reminder => (
-                <Timeline.Item key={reminder.id}>
-                  <div className="flex justify-between">
-                    <span>{reminder.title}</span>
-                    <span className="text-gray-500">{reminder.time}</span>
-                  </div>
-                </Timeline.Item>
-              ))}
-              {stats.upcomingReminders.length === 0 && (
-                <div className="text-gray-500">Không có nhắc nhở nào sắp tới</div>
-              )}
-            </Timeline>
-          </Card>
-        </Col>
-        <Col span={12}>
-          <Card title="Ghi chú gần đây" extra={<BookOutlined />}>
-            <Timeline>
-              {stats.recentNotes.map(note => (
-                <Timeline.Item key={note.id}>
-                  <div className="flex justify-between">
-                    <span>{note.title}</span>
-                    <span className="text-gray-500">{note.createdAt}</span>
-                  </div>
-                </Timeline.Item>
-              ))}
-              {stats.recentNotes.length === 0 && (
-                <div className="text-gray-500">Chưa có ghi chú nào</div>
-              )}
-            </Timeline>
-          </Card>
-        </Col>
-      </Row>
+      <Card title="Số lượt truy cập theo trang web">
+        {renderVisitChart()}
+      </Card>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <Statistic
+            title="Tổng thời gian sử dụng"
+            value={formatTime(statsData.reduce((sum, item) => sum + item.totalTime, 0))}
+          />
+        </Card>
+        <Card>
+          <Statistic
+            title="Tổng lượt truy cập"
+            value={statsData.reduce((sum, item) => sum + item.visitCount, 0)}
+            suffix="lượt"
+          />
+        </Card>
+        <Card>
+          <Statistic
+            title="Trang web thường xuyên nhất"
+            value={statsData.length ? statsData.sort((a, b) => b.visitCount - a.visitCount)[0].domain : '-'}
+          />
+        </Card>
+      </div>
+
+      <StorageLocationModal
+        visible={showStorageModal}
+        onSave={handleStorageLocationSave}
+      />
     </div>
-  )
-}
+  );
+};
 
-export default Dashboard 
+export default Dashboard; 

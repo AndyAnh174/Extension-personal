@@ -1,88 +1,105 @@
-// Kiểm tra và chặn các trang web
-chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-  const { blockedSites } = await chrome.storage.local.get(['blockedSites'])
-  if (!blockedSites) return
+// Lưu trữ rules hiện tại
+let currentRules = [];
 
-  const url = new URL(details.url)
-  const currentTime = new Date()
-  const currentHour = currentTime.getHours()
-  const currentMinute = currentTime.getMinutes()
+// Debug function
+function debugLog(type, ...args) {
+  console.log(`[${type}]`, ...args);
+}
 
-  for (const site of blockedSites) {
-    if (url.hostname.includes(site.url)) {
-      const [startHour, startMinute] = site.startTime.split(':').map(Number)
-      const [endHour, endMinute] = site.endTime.split(':').map(Number)
+// Kiểm tra xem URL có bị chặn không
+function checkBlockedUrl(url, rule) {
+  const hostname = new URL(url).hostname;
+  return rule.urls.some(blockedUrl => {
+    const isBlocked = hostname.includes(blockedUrl) || url.includes(blockedUrl);
+    if (isBlocked) {
+      debugLog('Match', `URL ${url} matches pattern ${blockedUrl}`);
+    }
+    return isBlocked;
+  });
+}
 
-      const isInBlockedTimeRange =
-        (currentHour > startHour || (currentHour === startHour && currentMinute >= startMinute)) &&
-        (currentHour < endHour || (currentHour === endHour && currentMinute <= endMinute))
+// Kiểm tra thời gian
+function checkBlockedTime(rule) {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+  
+  const [startHour, startMinute] = rule.startTime.split(':').map(Number);
+  const [endHour, endMinute] = rule.endTime.split(':').map(Number);
 
-      if (isInBlockedTimeRange) {
+  const currentTimeInMinutes = currentHour * 60 + currentMinute;
+  const startTimeInMinutes = startHour * 60 + startMinute;
+  const endTimeInMinutes = endHour * 60 + endMinute;
+
+  debugLog('Time', {
+    current: `${currentHour}:${currentMinute} (${currentTimeInMinutes})`,
+    start: `${startHour}:${startMinute} (${startTimeInMinutes})`,
+    end: `${endHour}:${endMinute} (${endTimeInMinutes})`
+  });
+
+  return currentTimeInMinutes >= startTimeInMinutes && currentTimeInMinutes < endTimeInMinutes;
+}
+
+// Khởi tạo extension
+function initializeExtension() {
+  debugLog('Init', 'Extension starting...');
+  
+  // Lấy rules từ storage
+  chrome.storage.sync.get(['focusRules'], (result) => {
+    if (result.focusRules) {
+      currentRules = result.focusRules;
+      debugLog('Rules', 'Loaded rules:', currentRules);
+    }
+  });
+}
+
+// Chạy khởi tạo khi extension được cài đặt hoặc cập nhật
+chrome.runtime.onInstalled.addListener(initializeExtension);
+
+// Chạy khởi tạo khi extension được khởi động
+chrome.runtime.onStartup.addListener(initializeExtension);
+
+// Lắng nghe message từ popup
+chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
+  debugLog('Message', 'Received message:', message);
+  
+  if (message.type === 'UPDATE_FOCUS_RULES' && message.rules) {
+    currentRules = message.rules;
+    debugLog('Rules', 'Updated rules:', currentRules);
+  }
+});
+
+// Kiểm tra URL khi tab được cập nhật
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url || tab.url) {
+    const url = changeInfo.url || tab.url;
+    debugLog('URL', 'Checking URL:', url);
+    
+    // Kiểm tra từng rule
+    currentRules.forEach(rule => {
+      if (rule.isActive && checkBlockedUrl(url, rule) && checkBlockedTime(rule)) {
+        debugLog('Block', 'Blocking access to:', url);
+        chrome.tabs.update(tabId, {
+          url: chrome.runtime.getURL('blocked.html')
+        });
+      }
+    });
+  }
+});
+
+// Kiểm tra khi người dùng điều hướng
+chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+  if (details.frameId === 0) { // Chỉ xử lý frame chính
+    debugLog('Navigation', 'Checking navigation to:', details.url);
+    
+    // Kiểm tra từng rule
+    currentRules.forEach(rule => {
+      if (rule.isActive && checkBlockedUrl(details.url, rule) && checkBlockedTime(rule)) {
+        debugLog('Block', 'Blocking navigation to:', details.url);
         chrome.tabs.update(details.tabId, {
           url: chrome.runtime.getURL('blocked.html')
-        })
-        break
+        });
       }
-    }
+    });
   }
-})
-
-// Xử lý các reminder
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  const { reminders } = await chrome.storage.local.get(['reminders'])
-  if (!reminders) return
-
-  const reminder = reminders.find(r => r.id === alarm.name)
-  if (reminder && reminder.isActive) {
-    chrome.notifications.create(reminder.id, {
-      type: 'basic',
-      iconUrl: 'icons/icon.svg',
-      title: reminder.title,
-      message: reminder.message
-    })
-  }
-})
-
-// Khởi tạo các tác vụ nền
-chrome.runtime.onInstalled.addListener(async () => {
-  // Thiết lập cài đặt mặc định
-  const { settings } = await chrome.storage.local.get(['settings'])
-  if (!settings) {
-    await chrome.storage.local.set({
-      settings: {
-        theme: 'light',
-        quoteSource: 'quotable',
-        waterReminderInterval: 30,
-        notifications: true
-      }
-    })
-  }
-
-  // Thiết lập reminders mặc định
-  const { reminders } = await chrome.storage.local.get(['reminders'])
-  if (!reminders) {
-    const defaultReminder = {
-      id: 'water',
-      title: 'Uống nước',
-      message: 'Đã đến giờ uống nước rồi! 💧',
-      interval: 30,
-      isActive: true
-    }
-    await chrome.storage.local.set({ reminders: [defaultReminder] })
-    
-    if (defaultReminder.isActive) {
-      chrome.alarms.create(defaultReminder.id, {
-        periodInMinutes: defaultReminder.interval
-      })
-    }
-  } else {
-    // Khởi tạo lại các alarm cho các reminder đang active
-    reminders.forEach(reminder => {
-      if (reminder.isActive) {
-        chrome.alarms.create(reminder.id, {
-          periodInMinutes: reminder.interval
-        })
-      }
-    })
-  }
-}) 
+}); 

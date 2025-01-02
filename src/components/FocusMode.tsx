@@ -1,223 +1,259 @@
 import { useState, useEffect } from 'react'
-import { Button, Card, Input, List, Typography, TimePicker, Switch, Tag } from 'antd'
-import { 
-  PlusOutlined, 
-  DeleteOutlined,
-  ClockCircleOutlined,
-  WarningOutlined 
-} from '@ant-design/icons'
-import dayjs from 'dayjs'
+import { Card, Button, Input, Switch, Typography, Modal, message, List } from 'antd'
+import { PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 
 const { Title, Text } = Typography
 
 interface FocusRule {
   id: string
-  url: string
-  startTime: string
-  endTime: string
+  name: string
+  urls: string[]
   isActive: boolean
-  timeSpent: number
 }
 
 const FocusMode = () => {
   const [rules, setRules] = useState<FocusRule[]>([])
-  const [newUrl, setNewUrl] = useState('')
-  const [startTime, setStartTime] = useState<dayjs.Dayjs>(dayjs().hour(9).minute(0))
-  const [endTime, setEndTime] = useState<dayjs.Dayjs>(dayjs().hour(17).minute(0))
-  const [isFocusModeOn, setIsFocusModeOn] = useState(false)
+  const [isModalVisible, setIsModalVisible] = useState(false)
+  const [editingRule, setEditingRule] = useState<FocusRule | null>(null)
+  const [newRule, setNewRule] = useState<Omit<FocusRule, 'id'>>({
+    name: '',
+    urls: [],
+    isActive: true
+  })
+  const [tempUrl, setTempUrl] = useState('')
 
   useEffect(() => {
-    chrome.storage.local.get(['focusRules', 'isFocusModeOn'], (result) => {
+    loadRules()
+  }, [])
+
+  const loadRules = () => {
+    chrome.storage.sync.get(['focusRules'], (result) => {
       if (result.focusRules) {
         setRules(result.focusRules)
       }
-      if (typeof result.isFocusModeOn === 'boolean') {
-        setIsFocusModeOn(result.isFocusModeOn)
-      }
     })
-  }, [])
+  }
 
-  useEffect(() => {
-    // Lưu trạng thái Focus Mode
-    chrome.storage.local.set({ isFocusModeOn })
+  const addUrl = () => {
+    if (!tempUrl) return
 
-    if (isFocusModeOn) {
-      // Bắt đầu theo dõi thời gian truy cập
-      startTracking()
+    if (editingRule) {
+      setEditingRule({
+        ...editingRule,
+        urls: [...editingRule.urls, tempUrl]
+      })
     } else {
-      // Dừng theo dõi
-      stopTracking()
+      setNewRule(prev => ({
+        ...prev,
+        urls: [...prev.urls, tempUrl]
+      }))
     }
-  }, [isFocusModeOn])
-
-  const startTracking = () => {
-    // Thêm listener cho chrome.webNavigation
-    chrome.webNavigation.onCompleted.addListener(handleNavigation)
+    setTempUrl('')
   }
 
-  const stopTracking = () => {
-    // Xóa listener
-    chrome.webNavigation.onCompleted.removeListener(handleNavigation)
+  const removeUrl = (url: string) => {
+    if (editingRule) {
+      setEditingRule({
+        ...editingRule,
+        urls: editingRule.urls.filter(u => u !== url)
+      })
+    } else {
+      setNewRule(prev => ({
+        ...prev,
+        urls: prev.urls.filter(u => u !== url)
+      }))
+    }
   }
 
-  const handleNavigation = (details: chrome.webNavigation.WebNavigationFramedCallbackDetails) => {
-    const url = new URL(details.url).hostname
-    const currentTime = dayjs()
-
-    rules.forEach(rule => {
-      if (rule.isActive && url.includes(rule.url)) {
-        const start = dayjs(rule.startTime, 'HH:mm')
-        const end = dayjs(rule.endTime, 'HH:mm')
-
-        if (currentTime.isAfter(start) && currentTime.isBefore(end)) {
-          // Chặn trang web
-          chrome.tabs.update(details.tabId, { url: 'blocked.html' })
-
-          // Cập nhật thời gian sử dụng
-          const updatedRules = rules.map(r => {
-            if (r.id === rule.id) {
-              return { ...r, timeSpent: (r.timeSpent || 0) + 1 }
-            }
-            return r
-          })
-          setRules(updatedRules)
-          chrome.storage.local.set({ focusRules: updatedRules })
-        }
-      }
-    })
-  }
-
-  const addRule = () => {
-    if (!newUrl) return
-
-    const newRule: FocusRule = {
+  const saveRule = () => {
+    const ruleToSave = editingRule || {
       id: Date.now().toString(),
-      url: newUrl,
-      startTime: startTime.format('HH:mm'),
-      endTime: endTime.format('HH:mm'),
-      isActive: true,
-      timeSpent: 0
+      ...newRule
     }
 
-    const updatedRules = [...rules, newRule]
-    setRules(updatedRules)
-    chrome.storage.local.set({ focusRules: updatedRules })
-    setNewUrl('')
-  }
+    if (!ruleToSave.name || ruleToSave.urls.length === 0) {
+      message.error('Vui lòng nhập đầy đủ thông tin')
+      return
+    }
 
-  const toggleRule = (id: string) => {
-    const updatedRules = rules.map(rule => {
-      if (rule.id === id) {
-        return { ...rule, isActive: !rule.isActive }
-      }
-      return rule
+    const updatedRules = editingRule
+      ? rules.map(r => r.id === editingRule.id ? ruleToSave : r)
+      : [...rules, ruleToSave]
+
+    setRules(updatedRules)
+    chrome.storage.sync.set({ focusRules: updatedRules })
+
+    setIsModalVisible(false)
+    setEditingRule(null)
+    setNewRule({
+      name: '',
+      urls: [],
+      isActive: true
     })
-    setRules(updatedRules)
-    chrome.storage.local.set({ focusRules: updatedRules })
+    message.success(editingRule ? 'Đã cập nhật quy tắc' : 'Đã thêm quy tắc mới')
   }
 
-  const deleteRule = (id: string) => {
-    const updatedRules = rules.filter(rule => rule.id !== id)
+  const toggleRule = (rule: FocusRule) => {
+    const updatedRule = { ...rule, isActive: !rule.isActive }
+    const updatedRules = rules.map(r => 
+      r.id === rule.id ? updatedRule : r
+    )
+    
     setRules(updatedRules)
-    chrome.storage.local.set({ focusRules: updatedRules })
+    chrome.storage.sync.set({ focusRules: updatedRules })
+
+    // Gửi message đến background script để cập nhật chặn
+    chrome.runtime.sendMessage({
+      type: 'UPDATE_FOCUS_RULES',
+      rules: updatedRules
+    })
+
+    message.success(updatedRule.isActive ? 'Đã bật chế độ tập trung' : 'Đã tắt chế độ tập trung')
   }
 
-  const formatTime = (minutes: number) => {
-    const hours = Math.floor(minutes / 60)
-    const mins = minutes % 60
-    return `${hours}h ${mins}m`
+  const removeRule = (ruleId: string) => {
+    const updatedRules = rules.filter(r => r.id !== ruleId)
+    setRules(updatedRules)
+    chrome.storage.sync.set({ focusRules: updatedRules })
+    message.success('Đã xóa quy tắc')
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <Title level={4}>Chế độ tập trung</Title>
-        <Switch
-          checked={isFocusModeOn}
-          onChange={setIsFocusModeOn}
-          checkedChildren="Bật"
-          unCheckedChildren="Tắt"
-        />
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setIsModalVisible(true)}
+        >
+          Thêm quy tắc
+        </Button>
       </div>
 
-      <Card title="Thêm quy tắc mới">
-        <div className="space-y-4">
-          <div>
-            <Text>URL trang web</Text>
-            <Input
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
-              placeholder="facebook.com"
-            />
-          </div>
-
-          <div className="flex gap-4">
-            <div>
-              <Text>Thời gian bắt đầu</Text>
-              <TimePicker
-                value={startTime}
-                onChange={(time) => time && setStartTime(time)}
-                format="HH:mm"
-                className="w-full"
-              />
-            </div>
-            <div>
-              <Text>Thời gian kết thúc</Text>
-              <TimePicker
-                value={endTime}
-                onChange={(time) => time && setEndTime(time)}
-                format="HH:mm"
-                className="w-full"
-              />
-            </div>
-          </div>
-
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={addRule}
-            block
-          >
-            Thêm quy tắc
-          </Button>
-        </div>
-      </Card>
-
-      <List
-        dataSource={rules}
-        renderItem={rule => (
-          <Card className="mb-4">
+      <div className="grid grid-cols-1 gap-4">
+        {rules.map(rule => (
+          <Card key={rule.id} className="shadow-sm">
             <div className="flex items-center justify-between">
               <div className="space-y-2">
-                <Text strong>{rule.url}</Text>
-                <div className="space-x-2">
-                  <Tag icon={<ClockCircleOutlined />}>
-                    {rule.startTime} - {rule.endTime}
-                  </Tag>
-                  {rule.timeSpent > 0 && (
-                    <Tag icon={<WarningOutlined />} color="red">
-                      Đã chặn {formatTime(rule.timeSpent)}
-                    </Tag>
-                  )}
+                <Title level={5} className="!mb-0">{rule.name}</Title>
+                <div className="space-y-1">
+                  {rule.urls.map(url => (
+                    <Text key={url} className="block text-gray-500">
+                      {url}
+                    </Text>
+                  ))}
                 </div>
               </div>
-              <div className="space-x-2">
+              <div className="flex items-center gap-2">
                 <Switch
                   checked={rule.isActive}
-                  onChange={() => toggleRule(rule.id)}
-                  size="small"
+                  onChange={() => toggleRule(rule)}
+                />
+                <Button
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    setEditingRule(rule)
+                    setIsModalVisible(true)
+                  }}
                 />
                 <Button
                   type="text"
                   danger
                   icon={<DeleteOutlined />}
-                  onClick={() => deleteRule(rule.id)}
+                  onClick={() => removeRule(rule.id)}
                 />
               </div>
             </div>
           </Card>
+        ))}
+
+        {rules.length === 0 && (
+          <div className="text-center text-gray-500 py-8">
+            Chưa có quy tắc nào
+          </div>
         )}
-      />
+      </div>
+
+      <Modal
+        title={editingRule ? 'Sửa quy tắc' : 'Thêm quy tắc mới'}
+        open={isModalVisible}
+        onOk={saveRule}
+        onCancel={() => {
+          setIsModalVisible(false)
+          setEditingRule(null)
+          setNewRule({
+            name: '',
+            urls: [],
+            isActive: true
+          })
+          setTempUrl('')
+        }}
+      >
+        <div className="space-y-4">
+          <div>
+            <Text>Tên quy tắc</Text>
+            <Input
+              value={editingRule?.name || newRule.name}
+              onChange={(e) => {
+                if (editingRule) {
+                  setEditingRule({ ...editingRule, name: e.target.value })
+                } else {
+                  setNewRule(prev => ({ ...prev, name: e.target.value }))
+                }
+              }}
+              placeholder="Ví dụ: Tập trung học tập"
+            />
+          </div>
+
+          <div>
+            <Text>Thêm URL</Text>
+            <div className="flex gap-2">
+              <Input
+                value={tempUrl}
+                onChange={(e) => setTempUrl(e.target.value)}
+                placeholder="Nhập URL cần chặn (ví dụ: facebook.com)"
+                onPressEnter={addUrl}
+              />
+              <Button onClick={addUrl}>Thêm</Button>
+            </div>
+          </div>
+
+          <List
+            size="small"
+            bordered
+            dataSource={editingRule?.urls || newRule.urls}
+            renderItem={url => (
+              <List.Item
+                actions={[
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => removeUrl(url)}
+                  />
+                ]}
+              >
+                {url}
+              </List.Item>
+            )}
+          />
+
+          <div className="flex items-center justify-between">
+            <Text>Bật ngay</Text>
+            <Switch
+              checked={editingRule?.isActive || newRule.isActive}
+              onChange={(checked) => {
+                if (editingRule) {
+                  setEditingRule({ ...editingRule, isActive: checked })
+                } else {
+                  setNewRule(prev => ({ ...prev, isActive: checked }))
+                }
+              }}
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

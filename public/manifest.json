@@ -1,24 +1,41 @@
 {
   "manifest_version": 3,
-  "name": "Personal Productivity Extension",
+  "name": "Personal Extension",
   "version": "1.0.0",
-  "description": "Tăng năng suất làm việc với các tính năng quản lý tab, chặn trang web và theo dõi thói quen",
+  "description": "Extension cá nhân để tăng năng suất làm việc",
   "permissions": [
-    "tabs",
     "storage",
-    "webNavigation",
-    "alarms",
-    "notifications"
+    "tabs",
+    "activeTab",
+    "windows",
+    "downloads",
+    "fileSystem"
   ],
   "action": {
     "default_popup": "index.html",
-    "default_icon": "icons/icon.svg"
+    "default_title": "Personal Extension"
   },
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "icons": {
-    "128": "icons/icon.svg"
-  }
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "file_system_provider_capabilities": {
+    "configurable": true,
+    "multiple_mounts": true,
+    "source": "network"
+  },
+  "file_handlers": [
+    {
+      "action": "edit",
+      "accept": {
+        "application/json": [".json"]
+      }
+    }
+  ]
 } 

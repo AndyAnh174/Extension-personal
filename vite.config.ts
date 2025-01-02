@@ -10,14 +10,15 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        background: resolve(__dirname, 'public/background.js')
+        background: resolve(__dirname, 'src/background.ts'),
       },
       output: {
         entryFileNames: '[name].js',
         chunkFileNames: '[name].js',
         assetFileNames: '[name].[ext]'
       }
-    }
+    },
+    assetsDir: '.'
   },
   publicDir: 'public'
 })

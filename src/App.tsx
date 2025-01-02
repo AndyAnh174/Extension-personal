@@ -3,8 +3,6 @@ import { ConfigProvider, theme } from 'antd'
 import { useTheme } from './contexts/ThemeContext'
 import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
-import TabManager from './components/TabManager'
-import WebBlocker from './components/WebBlocker'
 import Reminders from './components/Reminders'
 import Settings from './components/Settings'
 import Notes from './components/Notes'
@@ -14,6 +12,7 @@ import TaskManager from './components/TaskManager'
 import QuickActions from './components/QuickActions'
 import MeetingAssistant from './components/MeetingAssistant'
 import Analytics from './components/Analytics'
+import TabGroups from './components/TabGroups'
 
 const { darkAlgorithm, defaultAlgorithm } = theme
 
@@ -33,8 +32,7 @@ const App = () => {
         <Layout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/tabs" element={<TabManager />} />
-            <Route path="/blocker" element={<WebBlocker />} />
+            <Route path="/tabs" element={<TabGroups />} />
             <Route path="/reminders" element={<Reminders />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/notes" element={<Notes />} />

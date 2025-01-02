@@ -1,117 +1,170 @@
-// Áp dụng cài đặt khi extension khởi động
-chrome.runtime.onStartup.addListener(() => {
-  applySettings()
-})
+interface WebsiteStats {
+  domain: string;
+  totalTime: number;
+  visitCount: number;
+  lastVisit: number;
+}
 
-// Áp dụng cài đặt khi extension được cài đặt hoặc cập nhật
-chrome.runtime.onInstalled.addListener(() => {
-  applySettings()
-})
+interface WebsiteData {
+  [key: string]: WebsiteStats;
+}
 
-// Lắng nghe message từ popup
-chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
-  if (message.type === 'SET_AUTO_START') {
-    chrome.storage.sync.set({ autoStart: true })
-  } else if (message.type === 'REMOVE_AUTO_START') {
-    chrome.storage.sync.set({ autoStart: false })
-  }
-})
+let websiteData: WebsiteData = {};
+let currentTab: { id?: number; domain?: string; startTime?: number } = {};
 
-// Lắng nghe alarm cho reminders
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === 'backup') {
-    performBackup()
-  } else {
-    // Kiểm tra nếu là alarm của reminder
-    const { reminders = [] } = await chrome.storage.sync.get(['reminders'])
-    const reminder = reminders.find((r: any) => r.id === alarm.name)
-    
-    if (reminder) {
-      // Kiểm tra settings
-      const { settings } = await chrome.storage.sync.get(['settings'])
-      if (!settings?.notifications) return
-
-      // Hiển thị notification
-      chrome.notifications.create(reminder.id, {
-        type: 'basic',
-        iconUrl: '/icons/icon128.png',
-        title: reminder.title,
-        message: reminder.message,
-        priority: 2,
-        requireInteraction: true
-      })
-
-      // Phát âm thanh nếu được bật
-      if (settings?.soundEnabled) {
-        const audio = new Audio(chrome.runtime.getURL('notification.mp3'))
-        audio.play()
-      }
-
-      // Cập nhật nextTrigger
-      const updatedReminders = reminders.map((r: any) => {
-        if (r.id === reminder.id) {
-          return {
-            ...r,
-            nextTrigger: Date.now() + r.interval * 60 * 1000
-          }
-        }
-        return r
-      })
-      
-      chrome.storage.sync.set({ reminders: updatedReminders })
-    }
-  }
-})
-
-// Xử lý click vào notification
-chrome.notifications.onClicked.addListener((reminderId) => {
-  // Mở popup khi click vào notification
-  chrome.action.openPopup()
-  // Đóng notification
-  chrome.notifications.clear(reminderId)
-})
-
-async function applySettings() {
-  const { settings } = await chrome.storage.sync.get(['settings'])
-  if (!settings) return
-
-  // Áp dụng theme
-  document.documentElement.setAttribute('data-theme', settings.theme)
-
-  // Áp dụng font
-  document.documentElement.style.setProperty('--font-family', settings.fontFamily)
-  document.documentElement.style.fontSize = `${settings.fontSize}px`
-
-  // Xử lý notifications
-  if (settings.notifications) {
-    Notification.requestPermission()
-  }
-
-  // Xử lý backup tự động
-  if (settings.autoBackup) {
-    chrome.alarms.create('backup', {
-      periodInMinutes: settings.backupInterval * 60
-    })
-  } else {
-    chrome.alarms.clear('backup')
+// Hàm lấy domain từ URL
+function getDomain(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch {
+    return url;
   }
 }
 
-async function performBackup() {
-  const data = await chrome.storage.sync.get(null)
-  const backup = {
-    timestamp: new Date().toISOString(),
-    data
+// Lưu dữ liệu vào file
+async function saveWebsiteData() {
+  try {
+    const { storageLocation } = await chrome.storage.local.get('storageLocation');
+    if (storageLocation?.filename) {
+      const updatedData = {
+        last_updated: new Date().toISOString(),
+        website_stats: websiteData
+      };
+
+      // Tạo Blob từ dữ liệu mới
+      const blob = new Blob([JSON.stringify(updatedData, null, 2)], {
+        type: 'application/json'
+      });
+
+      // Tạo URL cho blob
+      const url = URL.createObjectURL(blob);
+
+      // Ghi đè file cũ
+      await chrome.downloads.download({
+        url: url,
+        filename: storageLocation.filename,
+        conflictAction: 'overwrite'
+      });
+
+      // Cleanup
+      URL.revokeObjectURL(url);
+    }
+    
+    // Vẫn lưu vào storage.local để truy cập nhanh
+    await chrome.storage.local.set({ websiteData });
+  } catch (error) {
+    console.error('Error saving website data:', error);
   }
+}
 
-  // Lưu backup vào local storage
-  const { backups = [] } = await chrome.storage.local.get(['backups'])
-  backups.push(backup)
+// Cập nhật thống kê cho tab hiện tại
+function updateCurrentTabStats() {
+  if (currentTab.id && currentTab.domain && currentTab.startTime) {
+    const now = Date.now();
+    const timeSpent = Math.floor((now - currentTab.startTime) / 1000); // Chuyển đổi thành giây
 
-  // Giữ lại 10 bản backup gần nhất
-  if (backups.length > 10) {
-    backups.shift()
+    if (!websiteData[currentTab.domain]) {
+      websiteData[currentTab.domain] = {
+        domain: currentTab.domain,
+        totalTime: 0,
+        visitCount: 0,
+        lastVisit: now
+      };
+    }
+
+    websiteData[currentTab.domain].totalTime += timeSpent;
+    currentTab.startTime = now;
+    
+    saveWebsiteData();
   }
+}
 
-  await chrome.storage.local.set({ backups })
-} 
+// Xử lý khi tab được active
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  try {
+    // Cập nhật thống kê cho tab trước đó
+    updateCurrentTabStats();
+
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    if (tab.url) {
+      const domain = getDomain(tab.url);
+      currentTab = {
+        id: activeInfo.tabId,
+        domain,
+        startTime: Date.now()
+      };
+
+      if (!websiteData[domain]) {
+        websiteData[domain] = {
+          domain,
+          totalTime: 0,
+          visitCount: 1,
+          lastVisit: Date.now()
+        };
+      } else {
+        websiteData[domain].visitCount++;
+        websiteData[domain].lastVisit = Date.now();
+      }
+    }
+  } catch (error) {
+    console.error('Error handling tab activation:', error);
+  }
+});
+
+// Xử lý khi URL thay đổi
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url && tab.active) {
+    updateCurrentTabStats();
+
+    const domain = getDomain(changeInfo.url);
+    currentTab = {
+      id: tabId,
+      domain,
+      startTime: Date.now()
+    };
+
+    if (!websiteData[domain]) {
+      websiteData[domain] = {
+        domain,
+        totalTime: 0,
+        visitCount: 1,
+        lastVisit: Date.now()
+      };
+    } else {
+      websiteData[domain].visitCount++;
+      websiteData[domain].lastVisit = Date.now();
+    }
+  }
+});
+
+// Khởi tạo dữ liệu khi extension được load
+chrome.runtime.onStartup.addListener(async () => {
+  try {
+    const result = await chrome.storage.local.get('websiteData');
+    websiteData = result.websiteData || {};
+  } catch (error) {
+    console.error('Error loading website data:', error);
+  }
+});
+
+// API để lấy thống kê
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'GET_STATS') {
+    const { startDate, endDate } = message;
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    // Lọc và định dạng dữ liệu theo khoảng thời gian
+    const filteredData = Object.values(websiteData)
+      .filter(site => site.lastVisit >= start && site.lastVisit <= end)
+      .map(site => ({
+        domain: site.domain,
+        totalTime: site.totalTime,
+        visitCount: site.visitCount
+      }));
+
+    sendResponse({ success: true, data: filteredData });
+  }
+  return true;
+}); 

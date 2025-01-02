@@ -1,283 +1,229 @@
 import { useState, useEffect } from 'react'
-import { Card, Typography, Progress, List, DatePicker } from 'antd'
-import { 
-  ClockCircleOutlined,
-  CheckCircleOutlined,
-  StopOutlined,
-  ReadOutlined,
-  FileTextOutlined 
-} from '@ant-design/icons'
+import { Card, Typography, DatePicker, Select, Empty, Spin } from 'antd'
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell
+} from 'recharts'
 import dayjs from 'dayjs'
 
-const { Title, Text } = Typography
+const { Title } = Typography
 const { RangePicker } = DatePicker
+const { Option } = Select
 
-interface Task {
-  id: string
-  title: string
-  completed: boolean
-  createdAt: number
+interface AnalyticsData {
+  timestamp: string
+  type: string
+  value: number
+  metadata?: any
 }
 
-interface Article {
-  id: string
-  title: string
-  isRead: boolean
-  addedAt: number
-}
-
-interface Note {
-  id: string
-  content: string
-  createdAt: number
-}
-
-interface FocusRule {
-  id: string
-  url: string
-  timeSpent: number
-}
-
-interface Analytics {
-  totalWorkTime: number
-  completedTasks: number
-  totalTasks: number
-  blockedSites: number
-  totalBlockedTime: number
-  readArticles: number
-  totalArticles: number
-  totalNotes: number
-}
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8']
 
 const Analytics = () => {
-  const [analytics, setAnalytics] = useState<Analytics>({
-    totalWorkTime: 0,
-    completedTasks: 0,
-    totalTasks: 0,
-    blockedSites: 0,
-    totalBlockedTime: 0,
-    readArticles: 0,
-    totalArticles: 0,
-    totalNotes: 0
-  })
+  const [loading, setLoading] = useState(false)
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
     dayjs().subtract(7, 'day'),
     dayjs()
   ])
+  const [chartType, setChartType] = useState<'line' | 'bar' | 'pie'>('line')
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData[]>([])
+  const [processedData, setProcessedData] = useState<any[]>([])
 
   useEffect(() => {
-    updateAnalytics()
+    fetchAnalytics()
   }, [dateRange])
 
-  const updateAnalytics = () => {
-    chrome.storage.local.get([
-      'totalWorkTime',
-      'tasks',
-      'focusRules',
-      'articles',
-      'notes'
-    ], (result) => {
-      // Tổng thời gian làm việc
-      const totalWorkTime = result.totalWorkTime || 0
+  const fetchAnalytics = async () => {
+    try {
+      setLoading(true)
+      const token = localStorage.getItem('token')
+      const response = await fetch(
+        `http://localhost:3001/api/analytics/range?startDate=${dateRange[0].toISOString()}&endDate=${dateRange[1].toISOString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      )
 
-      // Thống kê công việc
-      const tasks = (result.tasks || []) as Task[]
-      const filteredTasks = tasks.filter((task: Task) => {
-        const taskDate = dayjs(task.createdAt)
-        return taskDate.isAfter(dateRange[0]) && taskDate.isBefore(dateRange[1])
-      })
-      const completedTasks = filteredTasks.filter((task: Task) => task.completed).length
-      const totalTasks = filteredTasks.length
+      if (!response.ok) {
+        throw new Error('Failed to fetch analytics data')
+      }
 
-      // Thống kê chặn web
-      const focusRules = (result.focusRules || []) as FocusRule[]
-      const blockedSites = focusRules.length
-      const totalBlockedTime = focusRules.reduce((acc: number, rule: FocusRule) => acc + (rule.timeSpent || 0), 0)
-
-      // Thống kê đọc bài viết
-      const articles = (result.articles || []) as Article[]
-      const filteredArticles = articles.filter((article: Article) => {
-        const articleDate = dayjs(article.addedAt)
-        return articleDate.isAfter(dateRange[0]) && articleDate.isBefore(dateRange[1])
-      })
-      const readArticles = filteredArticles.filter((article: Article) => article.isRead).length
-      const totalArticles = filteredArticles.length
-
-      // Thống kê ghi chú
-      const notes = (result.notes || []) as Note[]
-      const filteredNotes = notes.filter((note: Note) => {
-        const noteDate = dayjs(note.createdAt)
-        return noteDate.isAfter(dateRange[0]) && noteDate.isBefore(dateRange[1])
-      })
-      const totalNotes = filteredNotes.length
-
-      setAnalytics({
-        totalWorkTime,
-        completedTasks,
-        totalTasks,
-        blockedSites,
-        totalBlockedTime,
-        readArticles,
-        totalArticles,
-        totalNotes
-      })
-    })
+      const data = await response.json()
+      setAnalyticsData(data)
+      processData(data)
+    } catch (error) {
+      console.error('Error fetching analytics:', error)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const formatTime = (minutes: number) => {
-    const hours = Math.floor(minutes / 60)
-    const mins = minutes % 60
-    return `${hours}h ${mins}m`
+  const processData = (data: AnalyticsData[]) => {
+    // Nhóm dữ liệu theo ngày và loại
+    const groupedData = data.reduce((acc: any, item) => {
+      const date = dayjs(item.timestamp).format('DD/MM')
+      if (!acc[date]) {
+        acc[date] = {}
+      }
+      if (!acc[date][item.type]) {
+        acc[date][item.type] = 0
+      }
+      acc[date][item.type] += item.value
+      return acc
+    }, {})
+
+    // Chuyển đổi dữ liệu cho biểu đồ
+    const chartData = Object.entries(groupedData).map(([date, values]: [string, any]) => ({
+      date,
+      ...values
+    }))
+
+    setProcessedData(chartData)
   }
 
-  const getTaskProgress = () => {
-    if (analytics.totalTasks === 0) return 0
-    return Math.round((analytics.completedTasks / analytics.totalTasks) * 100)
-  }
+  const renderChart = () => {
+    if (loading) {
+      return <div className="flex justify-center py-8"><Spin /></div>
+    }
 
-  const getReadingProgress = () => {
-    if (analytics.totalArticles === 0) return 0
-    return Math.round((analytics.readArticles / analytics.totalArticles) * 100)
+    if (!processedData.length) {
+      return <Empty description="Không có dữ liệu" />
+    }
+
+    const dataKeys = Object.keys(processedData[0]).filter(key => key !== 'date')
+
+    switch (chartType) {
+      case 'line':
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <LineChart data={processedData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {dataKeys.map((key, index) => (
+                <Line
+                  key={key}
+                  type="monotone"
+                  dataKey={key}
+                  stroke={COLORS[index % COLORS.length]}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        )
+
+      case 'bar':
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={processedData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {dataKeys.map((key, index) => (
+                <Bar
+                  key={key}
+                  dataKey={key}
+                  fill={COLORS[index % COLORS.length]}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        )
+
+      case 'pie':
+        // Tính tổng cho biểu đồ tròn
+        const pieData = dataKeys.map(key => ({
+          name: key,
+          value: processedData.reduce((sum, item) => sum + (item[key] || 0), 0)
+        }))
+
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                outerRadius={150}
+                fill="#8884d8"
+                dataKey="value"
+              >
+                {pieData.map((_entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        )
+    }
   }
 
   return (
-    <div className="p-6 space-y-8">
-      <div className="flex items-center justify-between mb-8">
-        <Title level={4} className="!mb-0">Thống kê hoạt động</Title>
-        <RangePicker
-          value={dateRange}
-          onChange={(dates) => {
-            if (dates && dates[0] && dates[1]) {
-              setDateRange([dates[0], dates[1]])
-            }
-          }}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="shadow-sm hover:shadow-md transition-all hover:z-[99999] relative">
-          <div className="flex items-start gap-6">
-            <div className="p-3 bg-blue-50 rounded-lg">
-              <ClockCircleOutlined className="text-2xl text-blue-500" />
-            </div>
-            <div className="flex-1">
-              <Text className="text-gray-600 block mb-2">Thời gian làm việc</Text>
-              <Title level={3} className="!mb-1">
-                {formatTime(analytics.totalWorkTime)}
-              </Title>
-              <Text type="secondary">Tổng thời gian</Text>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="shadow-sm hover:shadow-md transition-all hover:z-[99999] relative">
-          <div className="flex items-start gap-6">
-            <div className="p-3 bg-green-50 rounded-lg">
-              <CheckCircleOutlined className="text-2xl text-green-500" />
-            </div>
-            <div className="flex-1">
-              <Text className="text-gray-600 block mb-2">Công việc</Text>
-              <Progress
-                percent={getTaskProgress()}
-                format={() => `${analytics.completedTasks}/${analytics.totalTasks}`}
-                strokeColor="#10B981"
-                className="!mb-1"
-              />
-              <Text type="secondary">Hoàn thành</Text>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="shadow-sm hover:shadow-md transition-all hover:z-[99999] relative">
-          <div className="flex items-start gap-6">
-            <div className="p-3 bg-red-50 rounded-lg">
-              <StopOutlined className="text-2xl text-red-500" />
-            </div>
-            <div className="flex-1">
-              <Text className="text-gray-600 block mb-2">Chặn web</Text>
-              <Title level={3} className="!mb-1">
-                {analytics.blockedSites}
-              </Title>
-              <Text type="secondary">
-                Đã chặn {formatTime(analytics.totalBlockedTime)}
-              </Text>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="shadow-sm hover:shadow-md transition-all hover:z-[99999] relative">
-          <div className="flex items-start gap-6">
-            <div className="p-3 bg-purple-50 rounded-lg">
-              <ReadOutlined className="text-2xl text-purple-500" />
-            </div>
-            <div className="flex-1">
-              <Text className="text-gray-600 block mb-2">Đọc bài viết</Text>
-              <Progress
-                percent={getReadingProgress()}
-                format={() => `${analytics.readArticles}/${analytics.totalArticles}`}
-                strokeColor="#8B5CF6"
-                className="!mb-1"
-              />
-              <Text type="secondary">Đã đọc</Text>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      <Card className="shadow-sm hover:shadow-md transition-all hover:z-[99999] relative">
-        <div className="flex items-start gap-6">
-          <div className="p-3 bg-orange-50 rounded-lg">
-            <FileTextOutlined className="text-2xl text-orange-500" />
-          </div>
-          <div className="flex-1">
-            <Text className="text-gray-600 block mb-2">Ghi chú</Text>
-            <Title level={3} className="!mb-1">
-              {analytics.totalNotes}
-            </Title>
-            <Text type="secondary">Ghi chú đã tạo</Text>
-          </div>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <Title level={4}>Thống kê</Title>
+        <div className="flex items-center gap-4">
+          <Select
+            value={chartType}
+            onChange={setChartType}
+            style={{ width: 120 }}
+          >
+            <Option value="line">Đường</Option>
+            <Option value="bar">Cột</Option>
+            <Option value="pie">Tròn</Option>
+          </Select>
+          <RangePicker
+            value={dateRange}
+            onChange={(dates) => {
+              if (dates && dates[0] && dates[1]) {
+                setDateRange([dates[0], dates[1]]);
+              }
+            }}
+          />
         </div>
+      </div>
+
+      <Card>
+        {renderChart()}
       </Card>
 
-      <Card 
-        title="Thống kê chi tiết" 
-        className="shadow-sm hover:shadow-md transition-all hover:z-[99999] relative"
-      >
-        <List
-          size="large"
-          dataSource={[
-            {
-              label: 'Thời gian làm việc trung bình',
-              value: formatTime(Math.round(analytics.totalWorkTime / dateRange[1].diff(dateRange[0], 'day')))
-            },
-            {
-              label: 'Tỷ lệ hoàn thành công việc',
-              value: `${getTaskProgress()}%`
-            },
-            {
-              label: 'Số trang web đã chặn',
-              value: analytics.blockedSites
-            },
-            {
-              label: 'Thời gian đã tiết kiệm',
-              value: formatTime(analytics.totalBlockedTime)
-            },
-            {
-              label: 'Tỷ lệ đọc bài viết',
-              value: `${getReadingProgress()}%`
-            },
-            {
-              label: 'Số ghi chú trung bình mỗi ngày',
-              value: (analytics.totalNotes / dateRange[1].diff(dateRange[0], 'day')).toFixed(1)
-            }
-          ]}
-          renderItem={item => (
-            <List.Item className="flex justify-between py-4">
-              <Text className="text-gray-600">{item.label}</Text>
-              <Text strong className="text-lg">{item.value}</Text>
-            </List.Item>
-          )}
-        />
+      <Card title="Chi tiết dữ liệu">
+        <div className="space-y-4">
+          {analyticsData.map((item, index) => (
+            <div
+              key={index}
+              className="flex items-center justify-between p-3 border rounded"
+            >
+              <div>
+                <div className="font-medium">{item.type}</div>
+                <div className="text-sm text-gray-500">
+                  {dayjs(item.timestamp).format('DD/MM/YYYY HH:mm')}
+                </div>
+              </div>
+              <div className="font-medium">{item.value}</div>
+            </div>
+          ))}
+        </div>
       </Card>
     </div>
   )
